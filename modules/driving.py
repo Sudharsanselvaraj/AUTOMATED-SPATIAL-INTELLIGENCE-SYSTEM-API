@@ -14,7 +14,7 @@ from modules.resolver import resolve_location, get_lot_boundary
 ox.settings.use_cache = True
 ox.settings.log_console = False
 
-DRIVE_SPEED = 35  # km/h   gggggg
+DRIVE_SPEED = 35  # km/h  
 MAP_EXTENT = 1400
 
 
