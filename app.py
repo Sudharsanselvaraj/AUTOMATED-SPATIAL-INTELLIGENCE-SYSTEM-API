@@ -10,11 +10,12 @@ import os
 import time
 import logging
 import hashlib
-from reportlab.platypus import SimpleDocTemplate, Image as RLImage, Spacer
+from reportlab.platypus import SimpleDocTemplate, Image as RLImage, Spacer, Paragraph, PageBreak
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import inch
+from reportlab.lib import utils
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from fastapi.middleware.cors import CORSMiddleware
-
 # -----------------------------------------------------
 # IMPORT MODULES
 # -----------------------------------------------------
@@ -236,9 +237,49 @@ def noise(req: LocationRequest):
 def generate_pdf_report(data_type: str, value: str):
 
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    # Explicit landscape: (width, height) so page is horizontal
+    landscape_a4 = (A4[1], A4[0])
+    # Image box: use most of frame so diagram fills page (title + footer visible)
+    page_w_pt, page_h_pt = A4[1], A4[0]
+    margin_pt = 0.3 * inch
+    frame_w_pt = page_w_pt - 2 * margin_pt
+    frame_h_pt = page_h_pt - 2 * margin_pt
 
     elements = []
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        name="SlideTitle",
+        parent=styles["Heading1"],
+        fontSize=18,
+        spaceAfter=4,
+        alignment=1,  # centre
+    )
+    footer_style = ParagraphStyle(
+        name="Footer",
+        parent=styles["Normal"],
+        fontSize=9,
+        textColor="gray",
+        alignment=1,
+        spaceBefore=1,
+    )
+
+    _title_line_pt = title_style.fontSize * 1.2   # leading
+    _title_block_pt = 2 * _title_line_pt + title_style.spaceAfter
+    _spacer_pt = 0.25 * inch
+    reserved_h_pt = _title_block_pt + _spacer_pt
+
+    max_image_w_pt = frame_w_pt
+    max_image_h_pt = frame_h_pt - reserved_h_pt
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape_a4,
+        leftMargin=margin_pt,
+        rightMargin=margin_pt,
+        topMargin=margin_pt,
+        bottomMargin=margin_pt,
+    )
+
+    
 
     logging.info("Generating report images...")
 
@@ -246,7 +287,9 @@ def generate_pdf_report(data_type: str, value: str):
     # GENERATE ALL ANALYSIS IMAGES
     # --------------------------------------------------
 
-    walking_img = generate_walking(data_type, value)
+    # Generate core analysis images
+    walking_5 = generate_walking(data_type, value, 5)
+    walking_15 = generate_walking(data_type, value, 15)
     driving_img = generate_driving(data_type, value, ZONE_DATA)
     transport_img = generate_transport(data_type, value)
     context_img = generate_context(data_type, value, ZONE_DATA)
@@ -254,22 +297,60 @@ def generate_pdf_report(data_type: str, value: str):
     noise_img = generate_noise(data_type, value)
 
     images = [
-        walking_img,
+        walking_5,
+        walking_15,
         driving_img,
         transport_img,
         context_img,
         view_img,
-        noise_img
+        noise_img,
     ]
 
     # --------------------------------------------------
-    # ADD TO PDF
+    # COVER PAGE
     # --------------------------------------------------
 
-    for img_buffer in images:
+    site_label = f"{data_type} {value}"
+    elements.append(Spacer(1, 3 * inch))
+    elements.append(Paragraph("Site Analysis Report", title_style))
+    elements.append(Spacer(1, 0.3 * inch))
+    elements.append(Paragraph(site_label, styles["Heading2"]))
+    elements.append(PageBreak())
+
+    # --------------------------------------------------
+    # ONE ANALYSIS PER PAGE (landscape)
+    # --------------------------------------------------
+
+    titles = [
+        "Walking Accessibility (5 min)",
+        "Walking Accessibility (15 min)",
+        "Driving Distance",
+        "Transport Network",
+        "Context & Zoning",
+        "View Analysis",
+        "Noise Assessment",
+    ]
+
+    n_pages = len(titles)
+
+    for i, (slide_title, img_buffer) in enumerate(zip(titles, images), start=1):
+        elements.append(Paragraph(slide_title, title_style))
+        elements.append(Spacer(1, 0.25 * inch))
         img_buffer.seek(0)
-        elements.append(RLImage(img_buffer, width=6*inch, height=4.5*inch))
-        elements.append(Spacer(1, 0.6*inch))
+        data = img_buffer.read()
+        copy_buf = BytesIO(data)
+        reader = utils.ImageReader(copy_buf)
+        iw, ih = reader.getSize()
+        scale = min(max_image_w_pt / iw, max_image_h_pt / ih)
+        w = iw * scale
+        h = ih * scale
+        elements.append(RLImage(BytesIO(data), width=w, height=h))
+        # elements.append(Paragraph(
+        #     f"{site_label}  &middot;  Page {i} of {n_pages}",
+        #     footer_style
+        # ))
+        if i < n_pages:
+            elements.append(PageBreak())
 
     doc.build(elements)
 
